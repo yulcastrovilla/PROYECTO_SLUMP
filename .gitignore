@@ -1,0 +1,2 @@
+__pycache__/
+#Sirve para que Git no suba la carpeta de archivos temporales que genera Python.

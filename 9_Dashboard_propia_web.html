@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dashboard de mezclas de concreto</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+  :root { --ink:#1d2d3a; --muted:#5b6b78; --accent:#2a6f97; --paper:#f4f6f8; --card:#fff; --line:#d9e0e6; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:"Segoe UI",Arial,sans-serif; background:var(--paper); color:var(--ink); }
+  header { background:var(--accent); color:#fff; padding:24px 32px; }
+  header h1 { margin:0 0 4px; font-size:1.6rem; }
+  main { max-width:1200px; margin:0 auto; padding:24px; display:grid; gap:20px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:18px; }
+  .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px; }
+  .kpi span { display:block; color:var(--muted); font-size:.85rem; }
+  .kpi strong { font-size:1.5rem; }
+  .graficos { display:grid; grid-template-columns:repeat(auto-fit,minmax(380px,1fr)); gap:20px; }
+  p.nota { color:var(--muted); font-size:.9rem; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Análisis de mezclas de concreto</h1>
+  <div>Dashboard interactivo — Slump Test (resistencia, asentamiento y flujo)</div>
+</header>
+<main>
+  <section class="card">
+    <h2>Cargar datos</h2>
+    <p>Selecciona <b>slump_test.csv</b>. El archivo se procesa en tu navegador; las filas duplicadas se excluyen.</p>
+    <input type="file" id="archivo" accept=".csv,.data,.txt">
+    <p class="nota" id="estado">Carga el archivo para generar el dashboard.</p>
+  </section>
+  <section class="kpis" id="kpis"></section>
+  <section class="graficos">
+    <div class="card"><h3>Distribución de la resistencia</h3><div id="hist"></div></div>
+    <div class="card"><h3>Correlaciones</h3><div id="calor"></div></div>
+    <div class="card"><h3>Agua vs resistencia</h3><div id="disp"></div></div>
+  </section>
+</main>
+<script>
+const NOMBRES = {
+  "Cement":"Cemento","Slag":"Escoria","Fly ash":"Ceniza volante","Water":"Agua","SP":"Superplastificante",
+  "Coarse Aggr.":"Agregado grueso","Fine Aggr.":"Agregado fino","SLUMP(cm)":"Asentamiento (cm)",
+  "FLOW(cm)":"Flujo (cm)","Compressive Strength (28-day)(Mpa)":"Resistencia 28d (MPa)"
+};
+const OBJ = "Resistencia 28d (MPa)";
+
+const media = a => a.reduce((s,v)=>s+v,0)/a.length;
+const desv = a => { const m=media(a); return Math.sqrt(a.reduce((s,v)=>s+(v-m)**2,0)/(a.length-1)); };
+function pearson(a,b){
+  const ma=media(a), mb=media(b); let n=0,da=0,db=0;
+  for(let i=0;i<a.length;i++){ n+=(a[i]-ma)*(b[i]-mb); da+=(a[i]-ma)**2; db+=(b[i]-mb)**2; }
+  return n/Math.sqrt(da*db);
+}
+
+function leer(texto){
+  const lineas = texto.trim().split(/\r?\n/);
+  const cab = lineas[0].split(",").map(s=>s.trim());
+  const vistos = new Set(); const filas = [];
+  const total = lineas.length-1;
+  for(const l of lineas.slice(1)){
+    const c = l.split(",").map(s=>s.trim());
+    const clave = c.slice(1).join("|");           // ignora la columna "No"
+    if(vistos.has(clave)) continue;
+    vistos.add(clave); filas.push(c);
+  }
+  const cols = {};
+  cab.forEach((nombre,i)=>{ if(nombre!=="No") cols[NOMBRES[nombre]||nombre] = filas.map(f=>parseFloat(f[i])); });
+  return {cols, total, usados: filas.length};
+}
+
+function dibujar({cols,total,usados}){
+  const r = cols[OBJ];
+  document.getElementById("estado").textContent =
+    `${total} registros recibidos · ${total-usados} duplicados excluidos · ${usados} analizados`;
+  const kpis = [
+    ["Resistencia promedio", media(r).toFixed(2)+" MPa"],
+    ["Resistencia máxima", Math.max(...r).toFixed(2)+" MPa"],
+    ["Resistencia mínima", Math.min(...r).toFixed(2)+" MPa"],
+    ["Asentamiento promedio", media(cols["Asentamiento (cm)"]).toFixed(2)+" cm"],
+    ["Mezclas analizadas", usados]
+  ];
+  document.getElementById("kpis").innerHTML = kpis.map(([t,v])=>
+    `<div class="card kpi"><span>${t}</span><strong>${v}</strong></div>`).join("");
+
+  Plotly.newPlot("hist",[{x:r,type:"histogram",nbinsx:15,marker:{color:"#2a6f97"}}],{
+    xaxis:{title:"Resistencia a compresión (MPa)"},yaxis:{title:"Frecuencia"},margin:{t:20},
+    shapes:[{type:"line",x0:media(r),x1:media(r),y0:0,y1:1,yref:"paper",line:{color:"red",dash:"dash"}}],
+    annotations:[{x:media(r),y:1,yref:"paper",text:`Media ${media(r).toFixed(2)} · Desv. ${desv(r).toFixed(2)}`,showarrow:false,yanchor:"bottom"}]
+  },{responsive:true});
+
+  const nombres = Object.keys(cols);
+  const z = nombres.map(a=>nombres.map(b=>pearson(cols[a],cols[b])));
+  Plotly.newPlot("calor",[{z,x:nombres,y:nombres,type:"heatmap",zmin:-1,zmax:1,colorscale:"RdBu",reversescale:true}],
+    {margin:{t:20,l:150,b:150}},{responsive:true});
+
+  Plotly.newPlot("disp",[{x:cols["Agua"],y:r,mode:"markers",type:"scatter",
+    marker:{color:cols["Asentamiento (cm)"],colorscale:"Viridis",showscale:true,colorbar:{title:"Asent. (cm)"}}}],
+    {xaxis:{title:"Agua (kg/m³)"},yaxis:{title:"Resistencia (MPa)"},margin:{t:20}},{responsive:true});
+}
+
+document.getElementById("archivo").addEventListener("change", e=>{
+  const f = e.target.files[0]; if(!f) return;
+  const lector = new FileReader();
+  lector.onload = () => dibujar(leer(lector.result));
+  lector.readAsText(f);
+});
+</script>
+</body>
+</html>
